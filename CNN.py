@@ -1,6 +1,7 @@
 # MKKBOI005 - Tumi Mokoka
 # Convolutional Neural network 
 
+import sys
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -10,6 +11,9 @@ import torch.nn as nn
 import torch.nn.functional as Fun
 
 #defining the MLP architecture
+#TODO use convnet calculator to double check number of inputs and outputs for convolutions
+# TODO implement data augmentation and dropout
+
 class CNN (nn.Module):
     def __init__ (self):
         super().__init__()
@@ -20,15 +24,25 @@ class CNN (nn.Module):
         self.fc1 = nn.Linear(16*5*5, 120) #input is 3-channel 32x32 image
         self.fc2 = nn.Linear (120, 84) # First HL
         self.fc3 = nn.Linear (84 ,10) # Second HL
-        self.output = nn.LogSoftmax (dim =1) # output layer
+        self.output = nn.LogSoftmax (dim =1) # output 
+        
+        self.BN1 = nn.BatchNorm1d(120)
+        self.BN2 = nn.BatchNorm1d(84)
+        self.dropout = nn.Dropout(p = 0.1)
+        
 
     def forward(self, x):
         # x = Batch 
-        x = self.pool(Fun.leaky_relu(self.conv1(x)))
-        x = self.pool(Fun.leaky_relu(self.conv2(x)))
+        x = Fun.relu(self.conv1(x))
+        x = self.pool(x)
+        x = Fun.relu(self.conv2(x))
+        x = self.pool(x)
         x = torch.flatten(x,1) #flatten output tensor from convolution layers
-        x = Fun.leaky_relu(self.fc1(x))
-        x = Fun.leaky_relu(self.fc2(x))
+        x = Fun.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.BN1(x)
+        x = Fun.relu(self.fc2(x))
+        x = self.BN2(x)
         x = self.fc3(x) #output layer
         x = self.output(x)
         return x
@@ -64,8 +78,32 @@ def test (net, test_loader, device):
     return correct/total
 
 def main():
-    #creating transformation sequence
-    transform = transforms.Compose  (
+
+    load = False
+    save =  False
+
+    #check how many arguments in command line
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "-load":
+            load = True
+            print ("Loading model...")
+        elif sys.argv[1] == "-save":
+            save = True
+            print ("Saving model...")
+
+      # Create the transform sequence
+    transformTrain = transforms.Compose  (
+        [
+        transforms.RandomHorizontalFlip(p = 0.05), #random data augmentation for vertical flips
+        transforms.RandomRotation(degrees = 5), #random data augmentation for rotations
+        #transforms.ColorJitter(brightness = 0.4, contrast = 0.4, saturation = 0.4, hue = 0.1),
+        transforms.ToTensor(),  # Convert to Tensor
+        # Normalizes image to have mean = 0.5 and standard deviation = 0.5 for each RGB channel
+        transforms.Normalize(mean = [0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]) 
+        ]
+                                    )
+    
+    transformTest = transforms.Compose  (
         [
         transforms.ToTensor(),  # Convert to Tensor
         # Normalizes image to have mean = 0.5 and standard deviation = 0.5 for each RGB channel
@@ -74,9 +112,9 @@ def main():
                                     )
 
     # Training dataset
-    trainset = torchvision.datasets.CIFAR10(root= './data', train=True, download = True, transform=transform)
+    trainset = torchvision.datasets.CIFAR10(root= './data', train=True, download = True, transform=transformTrain)
     # Testing dataset
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transformTest)
 
         # using dataloaders --> pulls instances of the dataset in batches to feed into the training loop
     BATCH_SIZE = 32
@@ -92,19 +130,35 @@ def main():
                 )
     print(f"Using {device} device")
 
+    #creating the convolutional network
     cnn = CNN().to(device)
-    LEARNING_RATE = 0.005
-    MOMENTUM = 0.9
 
-    criterion = nn.NLLLoss()
-    optimizer = optim.SGD(cnn.parameters(), lr= LEARNING_RATE, momentum = MOMENTUM)
-
-    # train for 15 epochs
-    for epoch in range(15):
-        train_loss = train(cnn, train_loader, criterion, optimizer, device)
+    #loading a pre-trained model
+    if load:
+        cnn.load_state_dict(torch.load("cnn_model.pt"))
+        print("Model loaded")
         test_acc = test(cnn, test_loader, device)
-        print(f"Epoch {epoch+1}: Train loss = {train_loss:.4f}, Test accuracy = {test_acc:.4f}")
+        print(f"Test accuracy = {test_acc:.4f}")
+    
+    #training a new model
+    else:   
+        LEARNING_RATE = 0.005
+        MOMENTUM = 0.9
 
+        criterion = nn.NLLLoss()
+        optimizer = optim.SGD(cnn.parameters(), lr= LEARNING_RATE, momentum = MOMENTUM, weight_decay= 1e-6)
+
+        # train for 15 epochs
+        for epoch in range(15):
+            train_loss = train(cnn, train_loader, criterion, optimizer, device)
+            test_acc = test(cnn, test_loader, device)
+            print(f"Epoch {epoch+1}: Train loss = {train_loss:.4f}, Test accuracy = {test_acc:.4f}")
+
+
+    # Save model
+    if save:
+        torch.save(cnn.state_dict(), "cnn_model.pt")
+        print("CNN Model saved")
 
 if __name__ == "__main__":
     main()
