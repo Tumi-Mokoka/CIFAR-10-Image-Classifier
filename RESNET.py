@@ -12,42 +12,51 @@ import torchvision.transforms as transforms
 
 import torch.optim as optim
 import torch.nn as nn
-import torch.nn.functional as Fun
+import torch.nn.functional as F
 
 #defining the MLP architecture
 # TODO use convnet calculator to double check number of inputs and outputs for convolutions
 # TODO implement data augmentation and dropout
 
 class ResNet (nn.Module):
-    def __init__ (self):
-        super().__init__()
+    def __init__ (self, downsample = None):
+        super(ResNet, self).__init__()
         # Same as Convolution except ResNet shortcuts are added
-        self.conv1 = nn.Conv2d(3,6,5)
+        self.conv = nn.Conv2d(3,16, 3,1,1)
         self.pool = nn.MaxPool2d(2,2)
-        self.conv2 = nn.Conv2d (6,16,5)
-        self.fc1 = nn.Linear(16*5*5, 120) #input is 3-channel 32x32 image
+        self.batch = nn.BatchNorm2d(16)
+     
+        self.fc1 = nn.Linear(16*8*8, 120) #input is 3-channel 32x32 image
         self.fc2 = nn.Linear (120, 84) # First HL
         self.fc3 = nn.Linear (84 ,10) # Second HL
         self.output = nn.LogSoftmax (dim =1) # output layer
-        self.batch = nn.BatchNorm2d(64)
-        self.shortcut = nn.Identity()
-
 
         
+        self.shortcut = nn.Sequential(
+            nn.Conv2d(16, 16, 3,1,1),
+            nn.MaxPool2d(2,2),
+            nn.BatchNorm2d(16)
+                                )
 
     def forward(self, x):
-        # x = Batch 
-        x = Fun.relu(self.conv1(x))
-        x = self.pool(x)
-        x = Fun.leaky_relu(self.conv2(x))
-        x = self.pool(x)
+        output = x # value we want to output
 
-        x = torch.flatten(x,1) #flatten output tensor from convolution layers
-        x = Fun.relu(self.fc1(x))
-        x = Fun.relu(self.fc2(x))
-        x = self.fc3(x) #output layer
-        x = self.output(x)
-        return x
+        output = F.relu(self.conv(x))
+        output = self.pool(output)
+        output = self.batch(output)
+
+        identity = output
+        identity = self.shortcut(identity) #shortcut
+        print(identity.shape)
+        print(output.shape)
+        
+        output += identity # add residual connection    
+
+        output = F.relu(self.fc1(output))
+        output = F.relu(self.fc2(output))
+        output = self.fc3(output) #output layer
+        output = self.output(output)
+        return output
 
 #Training function
 def train(net, train_loader, criterion, optimizer, device):
@@ -108,17 +117,17 @@ def main():
                 )
     print(f"Using {device} device")
 
-    cnn = CNN().to(device)
+    resnet = ResNet().to(device)
     LEARNING_RATE = 0.005
     MOMENTUM = 0.9
 
     criterion = nn.NLLLoss()
-    optimizer = optim.SGD(cnn.parameters(), lr= LEARNING_RATE, momentum = MOMENTUM)
+    optimizer = optim.SGD(resnet.parameters(), lr= LEARNING_RATE, momentum = MOMENTUM)
 
     # train for 15 epochs
     for epoch in range(15):
-        train_loss = train(cnn, train_loader, criterion, optimizer, device)
-        test_acc = test(cnn, test_loader, device)
+        train_loss = train(resnet, train_loader, criterion, optimizer, device)
+        test_acc = test(resnet, test_loader, device)
         print(f"Epoch {epoch+1}: Train loss = {train_loss:.4f}, Test accuracy = {test_acc:.4f}")
 
 
